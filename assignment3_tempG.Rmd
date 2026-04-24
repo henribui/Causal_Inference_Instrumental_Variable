@@ -1,0 +1,1036 @@
+---
+title: "**Evaluation of Labor Policy**"
+subtitle: "Instrumental Variable"
+author: "Henri Bui"
+date: \today
+output: html_document
+# html_document: 
+#   theme: sandstone
+#   highlight: tango
+# pdf_document: default
+---
+  
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(fixest)
+library(ggplot2)
+library(AER)
+library(stargazer)
+
+# free the working memory
+rm(list = ls())
+
+# set working directory 
+# setwd(here::here()) # Note: the double colon is an alternative way of using a command 
+# from a given package without having to import the package. 
+# The expression 'here::here()' means: use the command here() from the package 'here'. 
+# The command here() returns the path to the folder where you saved your file. 
+
+# set seed 
+set.seed(1234)    # This command sets the starting point for random number generation to ensure reproducibility. 
+# By using the same seed value (e.g., 1234), the random numbers generated will be the same each time you run the code.
+
+# import the data in an object called 'data'
+data <- read.csv("data3.csv") 
+```
+
+<br>
+  
+## 1. Descriptive evidence
+
+**a. Familiarize yourself with the insurance variables**
+```{r}
+glimpse(data)
+```
+
+
+```{r insurance measures, include=TRUE}
+#We create the two variables
+
+data <- data %>%
+  mutate(
+    any_insurance_0m = if_else(
+      ins_ohp_0m == "Yes" |
+      ins_medicare_0m == "Yes" |
+      ins_employer_0m == "Yes" |
+      ins_privpay_0m == "Yes" |
+      ins_othcov_0m == "Yes",
+      1, 0
+    ),
+    any_insurance_12m = if_else(
+      ins_ohp_12m == "Yes" |
+      ins_medicare_12m == "Yes" |
+      ins_employer_12m == "Yes" |
+      ins_privpay_12m == "Yes" |
+      ins_othcov_12m == "Yes",
+      1, 0
+    )
+  )
+
+#how many individuals had their application approved
+sum(data$approved_app == "Yes", na.rm = TRUE)
+
+```
+8698 people had their applications approved.
+
+
+```{r}
+#among surveyed individuals, the share with any insurance at 0 months 
+
+mean(data$any_insurance_0m[data$surveyed_0m == "Yes"], na.rm = TRUE)
+
+```
+
+```{r}
+#among surveyed individuals, the share with any insurance at 12 months
+
+mean(data$any_insurance_12m[data$surveyed_12m == "Yes"], na.rm = TRUE)
+```
+
+```{r}
+#among surveyed individuals, the share with OHP insurance at 0 months
+
+mean(data$ins_ohp_0m[data$surveyed_0m == "Yes"] == "Yes", na.rm = TRUE)
+```
+
+
+```{r}
+#among surveyed individuals, the share with OHP insurance at 12 months
+mean(data$ins_ohp_12m[data$surveyed_12m == "Yes"] == "Yes", na.rm = TRUE)
+```
+
+<br>
+
+**b. OLS regression: health care utilization on insurance status** 
+OLS regression: $y_i = π_0 + π_1INSURANCE12M_i + ν_i$ 
+
+```{r simple OLS, include=TRUE}
+# people surveyed at 12 months
+
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes")
+
+#creating a dummy for the hospital visits at 12 months, converting yes to 1, etc.
+data_12m <- data_12m %>%
+  mutate(
+    hosp_any_12m_num = if_else(hosp_any_12m == "Yes", 1, 0)
+  )
+
+#Regression 1: Any hospital visits
+reg_1<- lm(hosp_any_12m_num ~ any_insurance_12m, data = data_12m)
+summary(reg_1)
+
+
+```
+The coefficient on any_insurance_12m is 0.051138, that means that having insurance at 12 months is associated with having 0.051138 percentage points more of any hospital visits, that is, at least one hospital visit.
+
+```{r}
+#Regression 2: Number of hospital visits
+
+reg_2 <- lm(hosp_num_mod_12m ~ any_insurance_12m, data = data_12m)
+summary(reg_2)
+```
+The coefficient on any_insurance_12m is 0.071508, that means that having insurance at 12 months is associated with 0.071508 more number of hospital visits. 
+
+```{r}
+#Regression 3: Total out-of-pocket costs
+
+reg_3 <- lm(cost_tot_oop_12m ~ any_insurance_12m, data = data_12m)
+summary(reg_3)
+
+```
+The coefficient on any_insurance_12m is -37.512, that means that having insurance at 12 months is associated with 37.512 dollars less of total out-of-pocket costs.
+<br>
+  
+**c. Can these be interpreted as causal evidence?**
+<br>
+No, these results cannot be interpreted causally. 
+<br>
+First, there exists omitted variable bias on `any_insurance_12m`. For example, sicker people are more likely to get insurance, as well as visit the hospital more often, and have higher medical spending. 
+<br>
+Second, there might be reverse causality. That is, people who are sick and visit the hospital more often, and as such have high medical costs, are more likely to get insurance as a result of that. 
+<br><br>
+The limitations of this regression include:
+
+1. The regression does not account for control variables. Factors like health, wealth, or age are not included as control variables in the regression. As mentioned earlier, the risk of OVB is high. Consequently, our estimate will be noisy.<br><br>
+
+2. `any_insurance_12m` encompasses any type of insurance and does not differentiate between private and public insurance. Our estimate will not be able to differentiate between private and public insurance and would thus lack nuance between different kind of insurance.
+<br>
+
+**d. OLS with pre-randomization controls**
+
+```{r OLS with controls, include=TRUE}
+
+#Regression 1: Any hospital visits
+
+reg_1.2 <- lm(
+  hosp_any_12m_num ~ any_insurance_12m +
+    birthyear_list +
+    female_list +
+    numhh_list +
+    english_list +
+    zip_msa,
+  data = data_12m
+)
+
+summary(reg_1.2)
+```
+After adding the controls, the coefficient on any_insurance_12m is 0.0503349, that means that having insurance at 12 months is associated with having 0.0503349 percentage points more of any hospital visits, that is, at least one hospital visit. This is lower than without the controls. 
+
+```{r}
+#Regression 2: Number of hospital visits
+
+reg_2.2 <- lm(
+  hosp_num_mod_12m ~ any_insurance_12m +
+    birthyear_list +
+    female_list +
+    numhh_list +
+    english_list +
+    zip_msa,
+  data = data_12m
+)
+
+summary(reg_2.2)
+
+```
+After adding the controls the coefficient on any_insurance_12m is 0.0706421, that means that having insurance at 12 months is associated with 0.0706421 percentage points more number of hospital visits. This is lower than without the controls.
+
+
+```{r}
+#Regression 3: Total out-of-pocket costs
+
+reg_3.2 <- lm(
+  cost_tot_oop_12m ~ any_insurance_12m +
+    birthyear_list +
+    female_list +
+    numhh_list +
+    english_list +
+    zip_msa,
+  data = data_12m
+)
+
+summary(reg_3.2)
+
+```
+After adding the controls the coefficient on any_insurance_12m is -39.9567, that means that having insurance at 12 months is associated with 39.956 dollars less of total out-of-pocket costs. This is higher than without controls. 
+<br>
+*Justification*
+<br>
+`birthyear_list`: We included the year of birth, because a persons' age is a pre-randomization characteristic and the age is very likely to influence both the decision to get insurance and health care needs, e.g. old people get sick more often, and are thus more likely to visit a hospital even without insurance, so controlling for age helps separate this from the effect of insurance. 
+<br>
+`female_list`: We included the gender, because this also is a pre-randomization characteristic and one's gender is also likely to influence decisions of insurance and health care needs. For example, women have the need for gyneocological health care services, something men don't have the need for. 
+<br>
+`numhh_list`: We included the household size, because this can also be considered a pre-randomization characteristic, since the size of the household can affect insurance and health care needs. For example, people with a bigger household size might affect decisions to obtain insurance, maybe for financial or other reasons. 
+<br>
+`english_list`: We included the individuals that requested english language materials, since this study was done in the US, and knowing english well may also impy how well a person can handle the health care system environment, which is in english, as it takes place in the US. For example, it is easier for a native english speaker to apply for insurance, including all the forms and administrative things that need to be dealt with. 
+<br>
+`zip_msa`: We included people with the ZIP code from the metropolitan statistical area because ones' location may affect the access to health care services. For example, someone that lives in a very central district might have bigger, better hospitals within their vicinity. 
+<br>
+  
+## 2. Validity checks
+  
+**a. Summary statistics insurance variables** 
+  
+```{r sum stats insured, include=TRUE}
+
+data <- data %>%
+  mutate(
+    lottery = if_else(treatment == "Selected", 1, 0),
+    applied = if_else(applied_app == "Submitted an Application to OHP", 1, 0),
+    approved = if_else(approved_app == "Yes", 1, 0),
+    ohp_12m = if_else(ins_ohp_12m == "Yes", 1, 0)
+  )
+
+summary_2a <- tibble(
+  variable = c("Selected in lottery",
+               "Submitted application",
+               "Application approved",
+               "Currently have OHP at 12 months"),
+  mean = c(
+    mean(data$lottery, na.rm = TRUE),
+    mean(data$applied, na.rm = TRUE),
+    mean(data$approved, na.rm = TRUE),
+    mean(data$ohp_12m[data$surveyed_12m == "Yes"], na.rm = TRUE)
+  )
+)
+
+summary_2a
+```
+  
+```{r}
+
+take_up_rate <- mean(data$ohp_12m[data$lottery == 1 & data$surveyed_12m == "Yes"], na.rm = TRUE)
+
+take_up_rate
+```
+<br>`lottery_selected`: Dummy variable that indicates if an individual was randomly selected to get an opportunity to apply for medicaid (treatment).
+<br>`applied`: Dummy variable that indicates if an individual has submitted an application to OHP.
+<br>`approved`: Dummy variable that indicates if an individual's application was approved.
+<br>`ohp_12m`: Dummy variabel that indicates if an individual has OHP insurance at 12 months.
+<br><br>
+
+Based on the summary statistics for the aforementioned variables, we can observe that as the application process goes on, the average decreases, which makes sense. At first, there are many randomly selected individuals that get the opportunity to apply for medicaid (39.82%). Second, the average amount of individuals that actually apply decreases to 24.19%. This can be due to multiple factors such as forgetting to apply, not wanting to apply or not needing to apply. Third, not all individuals that apply are actually selected as they must fulfill strict conditions based on income, value of assets, uninsured for at least 6 months and the average decreases further (11.61%). Fourth and finally, the individuals that actually had OHP insurance after 12 months was low relative to the amount of people invited to apply for OHP insurance. There is a large amount of individuals that are eligible for the OHP insurance; however the amount of individuals who actually benefited and had the OHP insurance in the next 12 months was relatively low. Therein, the take up rate is around 31.41% means that being randomly selected into the lottery only have people the chance to apply for medicaid, it doesn't actually guarantee it. This implies that the lottery only represents the opportunity to enroll and does not represent treatment itself. This is the reason why the lottery can later be used as an instrument for Medicaid coverage. <br> 
+
+As we have learned in class, the IV identifies causal effects for compliers, not for everyone. Here, the compliers are the individuals who were selected for the lottery and are part of the `take_up_rate`. The gap between `lottery_selected` and `take_up_rate` determines the size of the first stage, which determines how much the IV is scaled up relative to the ITT.
+
+
+
+<br>  
+
+<br>
+  
+**b. Balance checks** 
+  
+```{r balance checks, include=TRUE}
+
+# create treatment dummy
+data <- data %>%
+  mutate(
+    lottery_num    = if_else(treatment == "Selected", 1, 0),
+    female_num     = if_else(female_list == "1: Female", 1, 0),
+    zip_msa_num    = if_else(zip_msa == "Zip code of residence in a MSA", 1, 0),
+    english_num    = if_else(english_list == "Requested English materials", 1, 0),
+    first_day_num  = if_else(first_day_list == "Signed up for lottery list on first day", 1, 0),
+    have_phone_num = if_else(have_phone_list == "Gave Phone Number", 1, 0),
+    pobox_num      = if_else(pobox_list == "1: POBOX", 1, 0),
+    self_num       = if_else(self_list == "Signed self up", 1, 0),
+    numhh_num      = case_when(
+      numhh_list == "signed self up" ~ 1,
+      numhh_list == "signed self up + 1 additional person" ~ 2,
+      numhh_list == "signed self up + 2 additional people" ~ 3,
+      TRUE ~ NA_real_
+    )
+  )
+
+# keep only 0-month survey respondents for survey variables
+data_0m <- data %>%
+  filter(surveyed_0m == "Yes") %>%
+  mutate(
+    race_white_num       = if_else(race_white_0m == "Yes", 1, 0),
+    race_black_num       = if_else(race_black_0m == "Yes", 1, 0),
+    race_hisp_num        = if_else(race_hisp_0m == "Yes", 1, 0),
+    race_amerindian_num  = if_else(race_amerindian_0m == "Yes", 1, 0),
+    race_asian_num       = if_else(race_asian_0m == "Yes", 1, 0),
+    race_pacific_num     = if_else(race_pacific_0m == "Yes", 1, 0),
+    race_other_num       = if_else(race_other_qn_0m == "Yes", 1, 0),
+
+    # education as ordered categories
+    edu_num = case_when(
+      edu_0m == "less than hs" ~ 1,
+      edu_0m == "hs diploma or GED" ~ 2,
+      edu_0m == "vocational or 2-year degree" ~ 3,
+      edu_0m == "4-year degree" ~ 4,
+      TRUE ~ NA_real_
+    ),
+
+    # hours worked as ordered categories
+    employ_hrs_num = case_when(
+      employ_hrs_0m == "don't currently work" ~ 1,
+      employ_hrs_0m == "work <20 hrs/week" ~ 2,
+      employ_hrs_0m == "work 20-29 hrs/week" ~ 3,
+      employ_hrs_0m == "work 30+ hrs/week" ~ 4,
+      TRUE ~ NA_real_
+    ),
+
+    # income category as ordered categories
+    hhinc_cat_num = case_when(
+      hhinc_cat_0m == "$0" ~ 1,
+      hhinc_cat_0m == "$1-$2500" ~ 2,
+      hhinc_cat_0m == "$2501-$5000" ~ 3,
+      hhinc_cat_0m == "$5001-$7500" ~ 4,
+      hhinc_cat_0m == "$7501-$10000" ~ 5,
+      hhinc_cat_0m == "$10001-$12500" ~ 6,
+      hhinc_cat_0m == "$12501-$15000" ~ 7,
+      hhinc_cat_0m == "$15001-$17500" ~ 8,
+      hhinc_cat_0m == "$17501-$20000" ~ 9,
+      hhinc_cat_0m == "$20001-$22500" ~ 10,
+      hhinc_cat_0m == "$22501-$25000" ~ 11,
+      hhinc_cat_0m == "$25001-$27500" ~ 12,
+      hhinc_cat_0m == "$27501-$30000" ~ 13,
+      hhinc_cat_0m == "$30001-$32500" ~ 14,
+      hhinc_cat_0m == "$32501-$35000" ~ 15,
+      hhinc_cat_0m == "$35001-$37500" ~ 16,
+      hhinc_cat_0m == "$37501-$40000" ~ 17,
+      hhinc_cat_0m == "$40001-$42500" ~ 18,
+      hhinc_cat_0m == "$42501-$45000" ~ 19,
+      hhinc_cat_0m == "$45001-$47500" ~ 20,
+      hhinc_cat_0m == "$47501-$50000" ~ 21,
+      hhinc_cat_0m == ">$50000" ~ 22,
+      TRUE ~ NA_real_
+    )
+  )
+
+# function to compute means and t-test p-values
+balance_fun <- function(df, var) {
+  treat_mean   <- mean(df[[var]][df$lottery_num == 1], na.rm = TRUE)
+  control_mean <- mean(df[[var]][df$lottery_num == 0], na.rm = TRUE)
+  diff         <- treat_mean - control_mean
+  p_value      <- t.test(df[[var]] ~ df$lottery_num)$p.value
+
+  data.frame(
+    variable = var,
+    mean_treatment = treat_mean,
+    mean_control = control_mean,
+    difference = diff,
+    p_value = p_value
+  )
+}
+
+# pre-randomization balance
+pre_vars <- c(
+  "female_num", "birthyear_list", "numhh_num", "zip_msa_num",
+  "english_num", "first_day_num", "have_phone_num", "pobox_num", "self_num"
+)
+
+pre_balance <- bind_rows(lapply(pre_vars, function(x) balance_fun(data, x)))
+
+# survey 0 balance
+survey_vars <- c(
+  "race_white_num", "race_black_num", "race_hisp_num", "race_amerindian_num",
+  "race_asian_num", "race_pacific_num", "race_other_num",
+  "edu_num", "employ_hrs_num", "hhinc_cat_num", "hhinc_pctfpl_0m"
+)
+
+survey_balance <- bind_rows(lapply(survey_vars, function(x) balance_fun(data_0m, x)))
+
+kable(pre_balance, digits = 3, caption = "Balance checks: pre-randomization variables")
+
+
+```
+Looking at the table for balance checks for the pre-randomization variables, we can see that several variables are statistically significant, suggesting that there exists a difference between treatment and control group. We can see that lottery winners, are less likely to be female, are slightly younger, slightly less likely to live in the metropolitan statistical area, slightly less likely to have requested english materials, and slightly more likely to have provided a phone number. Although, these differences are shown to be statistically significant, they are not very large. However, we should we taking a closer look at the two most notable differences, which are `numhh_num`, `self_num`. Thereon, the result is somewhat to be expected as the oregon lottery is household based, whereby large households are more likely to have one member selected. 
+
+<br>
+
+```{r}
+kable(survey_balance, digits = 3, caption = "Balance checks: survey variables at 0 months")
+```
+
+In the table for balance checks of survey variables at 0 months, we can see that the difference between the groups is largely statistically insignificant, with a few exceptions being `race_white_0m` and `race_hisp_0m`, `hhinc_cat_num` and `hhinc_pctfpl_0m`. This does in fact suggest that the people in the treatment and control groups are not perfectly balances, much like the pre-randomization variables. However, if we look at the actual means, the differences are actually quite small, and thus may be economically negligible.
+
+Concluding, we can say that there exists some statistical significance between the two groups, but as for implications for the study, the balance checks can reasonably confirm that the two groups are comparable prior to treatment, although not perfect. The differences are fairly small. 
+
+<br>
+
+
+**c. Survey response differences**
+
+```{r survey response, include=TRUE}
+
+data <- data %>%
+  mutate(
+    lottery_num = if_else(treatment == "Selected", 1, 0),
+    surveyed0_num = if_else(surveyed_0m == "Yes", 1, 0),
+    surveyed12_num = if_else(surveyed_12m == "Yes", 1, 0)
+  )
+
+response_fun <- function(df, var) {
+  treat_mean   <- mean(df[[var]][df$lottery_num == 1], na.rm = TRUE)
+  control_mean <- mean(df[[var]][df$lottery_num == 0], na.rm = TRUE)
+  diff         <- treat_mean - control_mean
+  p_value      <- t.test(df[[var]] ~ df$lottery_num)$p.value
+
+  data.frame(
+    survey = var,
+    response_rate_treatment = treat_mean,
+    response_rate_control = control_mean,
+    difference = diff,
+    p_value = p_value
+  )
+}
+
+response_0m  <- response_fun(data, "surveyed0_num")
+response_12m <- response_fun(data, "surveyed12_num")
+
+response_table <- bind_rows(response_0m, response_12m)
+
+kable(response_table, digits = 3, caption = "Survey response rates by lottery status")
+
+```
+The survey response rates at 0 months and 12 months between lottery winners and lottery losers differ significantly at both surveys. At 0 months, 44.5% of winners responded, while only 29.2% of losers responded. At 12 months, 39.6% of winners responded, while only 26.5% of losers responded. Both differences are statistically significant. We can see that there exists a clear difference between the treatment and control group, raising concerns about selection and attrition bias. Our results suggest that the survey response rate is somewhat related to the treatment, that is winners. 
+<br>
+
+This could be due to selection bias, for example, lottery winners who were particularly motivated and more interested in Medicaid were more likely to respond to the surveys. At the same time, among the losers, perhaps only people who had strong opinions about not receiving Medicaid responded. Thus, part of the difference in the survey response rates doesn't come from the treatment itself, but actually from the composition of the the people in the two groups.
+
+<br>
+At the same time, attrition bias could play a role, therein, some people drop out over time. This is especially relevant at 12 months. For example, if uninsured people are particularly likely to stop responding to the survey, while insured people are more likely to respond, then our results are biased. As a result, we can no longer clearly compare both groups.  
+<br>
+
+**d. First stage regression**
+  
+```{r first stage, include=TRUE}
+
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes") %>%
+  mutate(
+    lottery_num = if_else(treatment == "Selected", 1, 0),
+    ohp12_num   = if_else(ins_ohp_12m == "Yes", 1, 0)
+  )
+
+first_stage <- lm(ohp12_num ~ lottery_num, data = data_12m)
+summary(first_stage)
+
+```
+The coefficient $\alpha_1$ on `lottery_num` is 0.20074, and it is hgihly statistically significant. This means that being selected into the lottery increases the probability of having OHP insurance at 12 months by 20.1 percentage points. Firstly, since the coefficient on `lottery_num` is highly statistically significant, the instrument is clearly relevant, as there is strong evidence that being selected into the lottery affected OHP insurance. Secondly, we can see that the instrument is also very strong, as the F-statistic is larger than 10. If we think about it logically, the result also makes sense, since winning the lottery gave individuals the direct opportunity to apply for insurance.
+
+
+<br>
+
+## 3. Causal effect estimation
+<br>
+**a. Estimation of ITT effects**
+  
+```{r effects using RCT, echo=TRUE}
+
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes") %>%
+  mutate(
+    hosp_any12_num = if_else(hosp_any_12m == "Yes", 1, 0)
+  )
+
+#Any hospital visits 12 months after the intervention
+
+itt_hosp <- lm(
+  hosp_any12_num ~ lottery_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num,
+  data = data_12m
+)
+summary(itt_hosp)
+
+```
+For any hospital visits ar 12 months, the coefficient on `lotter_num` is 0.0041, and it is not statistically significant, meaning that there is no strong evidence of an ITT effect on any hospital visits. 
+
+
+<br>
+
+```{r}
+#Total out of pocket costs for medical care 12 months after the intervention
+
+itt_oop <- lm(
+  cost_tot_oop_12m ~ lottery_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num,
+  data = data_12m
+)
+summary(itt_oop)
+```
+For total out of pocket costs at 12 months, the coefficient on `lotter_num` is -47.8506, and is highly statistically significant. This means that being a lottery winner means that they had about 47.85$ less out of pocket costs for medical care, compared to lottery losers. 
+
+ <br> <br>
+   
+**b. Estimation of IV model**
+  
+  
+```{r effects using IV, echo=TRUE}
+
+library(AER)
+
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes") %>%
+  mutate(
+    ohp12_num     = if_else(ins_ohp_12m == "Yes", 1, 0),
+    hosp_any12_num = if_else(hosp_any_12m == "Yes", 1, 0)
+  )
+
+iv_hosp <- ivreg(
+  hosp_any12_num ~ ohp12_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num |
+    lottery_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num,
+  data = data_12m
+)
+
+iv_oop <- ivreg(
+  cost_tot_oop_12m ~ ohp12_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num |
+    lottery_num + female_num + birthyear_list + numhh_num +
+    zip_msa_num + english_num + first_day_num + have_phone_num +
+    pobox_num + self_num,
+  data = data_12m
+)
+
+summary(iv_hosp)
+
+```
+For any hospital visits, the coefficient on `ohp12_num` is 0.0199, but it is not statistically significant. This means that there is no strong evidence that having OHP insurance at 12 months had an effect on the the probability of any hospital visits. 
+<br>
+
+
+```{r}
+summary(iv_oop)
+```
+For total out of pocket costs, the coefficient on `ohp12_num` is -230.1332, and is highly statistically significant. This means that being a lottery winner means that they had about 230.13$ less out of pocket costs for medical care, compared to lottery losers. 
+
+
+  <br><br>
+**c. Comparison across models**
+  
+```{r table, echo=TRUE}
+
+results_table <- data.frame(
+  Model = c(
+    "OLS: Any hospital visits",
+    "OLS: Total out-of-pocket costs",
+    "ITT: Any hospital visits",
+    "ITT: Total out-of-pocket costs",
+    "IV: Any hospital visits",
+    "IV: Total out-of-pocket costs"
+  ),
+  Main_variable = c(
+    "any_insurance_12m",
+    "any_insurance_12m",
+    "lottery_num",
+    "lottery_num",
+    "ohp12_num",
+    "ohp12_num"
+  ),
+  Estimate = c(
+    coef(reg_1)["any_insurance_12m"],
+    coef(reg_3)["any_insurance_12m"],
+    coef(itt_hosp)["lottery_num"],
+    coef(itt_oop)["lottery_num"],
+    coef(iv_hosp)["ohp12_num"],
+    coef(iv_oop)["ohp12_num"]
+  ),
+  Std_Error = c(
+    summary(reg_1)$coefficients["any_insurance_12m", "Std. Error"],
+    summary(reg_3)$coefficients["any_insurance_12m", "Std. Error"],
+    summary(itt_hosp)$coefficients["lottery_num", "Std. Error"],
+    summary(itt_oop)$coefficients["lottery_num", "Std. Error"],
+    summary(iv_hosp)$coefficients["ohp12_num", "Std. Error"],
+    summary(iv_oop)$coefficients["ohp12_num", "Std. Error"]
+  ),
+  P_value = c(
+    summary(reg_1)$coefficients["any_insurance_12m", "Pr(>|t|)"],
+    summary(reg_3)$coefficients["any_insurance_12m", "Pr(>|t|)"],
+    summary(itt_hosp)$coefficients["lottery_num", "Pr(>|t|)"],
+    summary(itt_oop)$coefficients["lottery_num", "Pr(>|t|)"],
+    summary(iv_hosp)$coefficients["ohp12_num", "Pr(>|t|)"],
+    summary(iv_oop)$coefficients["ohp12_num", "Pr(>|t|)"]
+  )
+)
+
+kable(results_table, digits = 3,
+      caption = "Comparison of OLS, ITT, and IV estimates")
+```
+
+In the OLS model, for any hospital visits, the coefficient is 0.051, and it is statistically significant, suggesting that people with OHP at 12 months were around 5.1 percentage points more likely to have had any hospital visits. However, this effect becomes smaller, as we move on to the ITT estimate, where it becomes 0.004, and the IV estimate is 0.02, whereby both the ITT and IV estimate are statistically insignificant. We can thus see that the OLS estimate is not representative of a true causal relationship, OLS has overstated the effect. This could be due to a selection bias, whereby, people who have insurance might differ systematically from those that don't, for example, people who are sicker are more likely to visit hospitals anyway. This makes insurance look more strongly associated with hospital visits than it truly is.
+
+For total out of pockets costs, on the other hand, all three models give negative estimates, and all three estimates are statistically significant. But, the magnitude of the coefficients differs substantially. The OLS estimate is -37.512, the ITT estimate is -47.851, and the IV estimate is -230.133. We can see that the IV estimate is substantially higher, and this is because the lottery effect was scaled up in the first stage regression, and in that it captures the causal effect of OHP coverage for compliers. 
+
+Concluding, the results indicate that Medicaid has had an effect of financials rather than hospital visits. 
+
+
+
+
+<br>
+
+## 4. AI Question
+<br>
+**a. Prompt and AI output**
+<br>
+The AI used was Chat GPT, and we have chosen to do table 6 from the paper, that is "Compliance with Recommended Preventitive Care. We chose this table because it is feasibile to replicate using our given data. The preventative care outcomes of the table can all be found in the data, and are the following: "Ever had cholesterol checked" (chl_chk_12m), "Ever had diabetes checked" (dia_chk_12m), "Ever had a mammogram" (mam_chk_12m), "Ever had a pap smear" (pap_chk_12m). Moreover, we keep the pre-randomization controls that we established in exercise 1d).  
+<br>
+AI prompt that we used: "For question 4a) can you please create the necessary dummy variables as shown in table 6, that is "Ever had cholesterol checked" (chl_chk_12m), "Ever had diabetes checked" (dia_chk_12m), "Ever had a mammogram" (mam_chk_12m), "Ever had a pap smear" (pap_chk_12m). We keep the same pre-randomization controls as before. Then estimate ITT regressions using the lottery selection, estimate the IV regression using OHP at 12 months, where the lottery selection is the instrument. Lastly, use your results in a clean table, and report control mean, ITT coefficient, ITT standard error, IV coefficient, IV standard error."
+<br>
+AI output: 
+```{r}
+#Create treatment, insurance, and control variables
+data <- data %>%
+  mutate(
+    lottery = if_else(treatment == "Selected", 1, 0),
+    ohp_12m = if_else(ins_ohp_12m == "Yes", 1, 0),
+    female = if_else(female_list == "1: Female", 1, 0)
+  )
+
+#Create preventive care dummy variables
+data <- data %>%
+  mutate(
+    ever_chol_checked = if_else(chl_chk_12m != "Never", 1, 0),
+    ever_diab_checked = if_else(dia_chk_12m != "Never", 1, 0),
+    mam_last12m = if_else(mam_chk_12m == "Yes, last year", 1, 0),
+    pap_last12m = if_else(pap_chk_12m == "Yes, last year", 1, 0)
+  )
+
+#Restrict to 12-month survey sample
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes")
+
+#Create outcome-specific samples
+data_mam <- data_12m %>%
+  filter(female == 1, 2009 - birthyear_list >= 40)
+
+data_pap <- data_12m %>%
+  filter(female == 1)
+
+#ITT regressions
+itt_chol <- lm(
+  ever_chol_checked ~ lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+itt_diab <- lm(
+  ever_diab_checked ~ lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+itt_mam <- lm(
+  mam_last12m ~ lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_mam
+)
+
+itt_pap <- lm(
+  pap_last12m ~ lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_pap
+)
+
+#IV regressions
+iv_chol <- ivreg(
+  ever_chol_checked ~ ohp_12m +
+    birthyear_list + female + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+iv_diab <- ivreg(
+  ever_diab_checked ~ ohp_12m +
+    birthyear_list + female + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+iv_mam <- ivreg(
+  mam_last12m ~ ohp_12m +
+    birthyear_list + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_mam
+)
+
+iv_pap <- ivreg(
+  pap_last12m ~ ohp_12m +
+    birthyear_list + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_pap
+)
+
+#Create clean results table
+results_table <- tibble(
+  outcome = c(
+    "Ever had cholesterol checked",
+    "Ever had diabetes checked",
+    "Had a mammogram in last 12 months",
+    "Had a pap smear in last 12 months"
+  ),
+  control_mean = c(
+    mean(data_12m$ever_chol_checked[data_12m$lottery == 0], na.rm = TRUE),
+    mean(data_12m$ever_diab_checked[data_12m$lottery == 0], na.rm = TRUE),
+    mean(data_mam$mam_last12m[data_mam$lottery == 0], na.rm = TRUE),
+    mean(data_pap$pap_last12m[data_pap$lottery == 0], na.rm = TRUE)
+  ),
+  itt_coef = c(
+    coef(summary(itt_chol))["lottery", "Estimate"],
+    coef(summary(itt_diab))["lottery", "Estimate"],
+    coef(summary(itt_mam))["lottery", "Estimate"],
+    coef(summary(itt_pap))["lottery", "Estimate"]
+  ),
+  itt_se = c(
+    coef(summary(itt_chol))["lottery", "Std. Error"],
+    coef(summary(itt_diab))["lottery", "Std. Error"],
+    coef(summary(itt_mam))["lottery", "Std. Error"],
+    coef(summary(itt_pap))["lottery", "Std. Error"]
+  ),
+  iv_coef = c(
+    coef(summary(iv_chol))["ohp_12m", "Estimate"],
+    coef(summary(iv_diab))["ohp_12m", "Estimate"],
+    coef(summary(iv_mam))["ohp_12m", "Estimate"],
+    coef(summary(iv_pap))["ohp_12m", "Estimate"]
+  ),
+  iv_se = c(
+    coef(summary(iv_chol))["ohp_12m", "Std. Error"],
+    coef(summary(iv_diab))["ohp_12m", "Std. Error"],
+    coef(summary(iv_mam))["ohp_12m", "Std. Error"],
+    coef(summary(iv_pap))["ohp_12m", "Std. Error"]
+  )
+)
+
+results_table
+```
+
+
+<br>
+
+**b. Did the AI-generated code run?**
+
+<br>
+We ran the AI generated output, and it has displayed the table as shown above. We would say that the code worked pretty well, and it has generated the most important results as outlined in the prompt, that is control means, ITT coefficients, ITT standard errors, IV coefficients, and IV standard errors. However, one can quickly see that the table above is not an exact replication of the table 6 in the paper. The most notable, is the formatting. In the paper, table 6 shows control means, ITT estimates, LATE estimates, and p-values. What our table is clearly misssing, is the column containing the p-values (which to be fair we did not mention in the prompt) as well as the standardized treatement effect row. 
+<br>
+Additional AI prompt for improvement of the table:"Please improve the table, by changing the formatting, that is the standard error should be displayed below the corresponding coefficient, add a p-value column, as well as a row for the standardized treatment effect."
+<br>
+AI output: 
+```{r}
+library(tidyverse)
+library(AER)
+library(knitr)
+library(kableExtra)
+
+#----------------------------
+# Helper functions
+#----------------------------
+
+coef_se <- function(model, varname, digits = 3) {
+  est <- coef(summary(model))[varname, "Estimate"]
+  se  <- coef(summary(model))[varname, "Std. Error"]
+  paste0(round(est, digits), "<br>(" , round(se, digits), ")")
+}
+
+pval_fun <- function(model, varname, digits = 4) {
+  est <- coef(summary(model))[varname, "Estimate"]
+  se  <- coef(summary(model))[varname, "Std. Error"]
+  
+  t_stat <- est / se
+  p <- 2 * (1 - pnorm(abs(t_stat)))
+  
+  if (p < 0.0001) {
+    return("&lt;0.0001")
+  } else {
+    return(format(round(p, digits), nsmall = digits))
+  }
+}
+
+mean_sd <- function(x, digits = 3) {
+  paste0(round(mean(x, na.rm = TRUE), digits), "<br>(",
+         round(sd(x, na.rm = TRUE), digits), ")")
+}
+
+#----------------------------
+# Data preparation
+#----------------------------
+
+data <- read_csv("data3.csv")
+
+data <- data %>%
+  mutate(
+    lottery = if_else(treatment == "Selected", 1, 0),
+    ohp_12m = if_else(ins_ohp_12m == "Yes", 1, 0),
+    female = if_else(female_list == "1: Female", 1, 0),
+
+    ever_chol_checked = if_else(chl_chk_12m != "Never", 1, 0),
+    ever_diab_checked = if_else(dia_chk_12m != "Never", 1, 0),
+    mam_last12m = if_else(mam_chk_12m == "Yes, last year", 1, 0),
+    pap_last12m = if_else(pap_chk_12m == "Yes, last year", 1, 0)
+  )
+
+data_12m <- data %>%
+  filter(surveyed_12m == "Yes")
+
+data_mam <- data_12m %>%
+  filter(female == 1, 2009 - birthyear_list >= 40)
+
+data_pap <- data_12m %>%
+  filter(female == 1)
+
+#----------------------------
+# ITT regressions
+#----------------------------
+
+itt_chol <- lm(
+  ever_chol_checked ~ lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+itt_diab <- lm(
+  ever_diab_checked ~ lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+itt_mam <- lm(
+  mam_last12m ~ lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_mam
+)
+
+itt_pap <- lm(
+  pap_last12m ~ lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_pap
+)
+
+#----------------------------
+# IV regressions
+#----------------------------
+
+iv_chol <- ivreg(
+  ever_chol_checked ~ ohp_12m +
+    birthyear_list + female + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+iv_diab <- ivreg(
+  ever_diab_checked ~ ohp_12m +
+    birthyear_list + female + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_12m
+)
+
+iv_mam <- ivreg(
+  mam_last12m ~ ohp_12m +
+    birthyear_list + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_mam
+)
+
+iv_pap <- ivreg(
+  pap_last12m ~ ohp_12m +
+    birthyear_list + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + numhh_list + english_list + zip_msa,
+  data = data_pap
+)
+
+#----------------------------
+# Standardized treatment effect
+# Approximation
+#----------------------------
+
+# control-group means and standard deviations
+chol_mean_c <- mean(data_12m$ever_chol_checked[data_12m$lottery == 0], na.rm = TRUE)
+chol_sd_c   <- sd(data_12m$ever_chol_checked[data_12m$lottery == 0], na.rm = TRUE)
+
+diab_mean_c <- mean(data_12m$ever_diab_checked[data_12m$lottery == 0], na.rm = TRUE)
+diab_sd_c   <- sd(data_12m$ever_diab_checked[data_12m$lottery == 0], na.rm = TRUE)
+
+mam_mean_c <- mean(data_mam$mam_last12m[data_mam$lottery == 0], na.rm = TRUE)
+mam_sd_c   <- sd(data_mam$mam_last12m[data_mam$lottery == 0], na.rm = TRUE)
+
+pap_mean_c <- mean(data_pap$pap_last12m[data_pap$lottery == 0], na.rm = TRUE)
+pap_sd_c   <- sd(data_pap$pap_last12m[data_pap$lottery == 0], na.rm = TRUE)
+
+# create standardized outcomes first
+data_ste <- data_12m %>%
+  mutate(
+    z_chol = as.numeric((ever_chol_checked - chol_mean_c) / chol_sd_c),
+    z_diab = as.numeric((ever_diab_checked - diab_mean_c) / diab_sd_c),
+    z_mam = if_else(
+      female == 1 & 2009 - birthyear_list >= 40,
+      as.numeric((mam_last12m - mam_mean_c) / mam_sd_c),
+      NA_real_
+    ),
+    z_pap = if_else(
+      female == 1,
+      as.numeric((pap_last12m - pap_mean_c) / pap_sd_c),
+      NA_real_
+    )
+  )
+
+# now create the standardized treatment effect index
+data_ste$ste_index <- rowMeans(
+  cbind(data_ste$z_chol, data_ste$z_diab, data_ste$z_mam, data_ste$z_pap),
+  na.rm = TRUE
+)
+
+itt_ste <- lm(
+  ste_index ~ lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_ste
+)
+
+iv_ste <- ivreg(
+  ste_index ~ ohp_12m +
+    birthyear_list + female + numhh_list + english_list + zip_msa |
+    lottery +
+    birthyear_list + female + numhh_list + english_list + zip_msa,
+  data = data_ste
+)
+
+#----------------------------
+# Final formatted table
+#----------------------------
+
+results_table <- tibble(
+  outcome = c(
+    "Blood cholesterol checked (ever)",
+    "Blood tested for high blood sugar/diabetes (ever)",
+    "Mammogram within last 12 months (women >= 40)",
+    "Pap test within last 12 months (women)",
+    "Standardized treatment effect"
+  ),
+  control_mean = c(
+    mean_sd(data_12m$ever_chol_checked[data_12m$lottery == 0]),
+    mean_sd(data_12m$ever_diab_checked[data_12m$lottery == 0]),
+    mean_sd(data_mam$mam_last12m[data_mam$lottery == 0]),
+    mean_sd(data_pap$pap_last12m[data_pap$lottery == 0]),
+    ""
+  ),
+  ITT = c(
+    coef_se(itt_chol, "lottery"),
+    coef_se(itt_diab, "lottery"),
+    coef_se(itt_mam, "lottery"),
+    coef_se(itt_pap, "lottery"),
+    coef_se(itt_ste, "lottery")
+  ),
+  LATE = c(
+    coef_se(iv_chol, "ohp_12m"),
+    coef_se(iv_diab, "ohp_12m"),
+    coef_se(iv_mam, "ohp_12m"),
+    coef_se(iv_pap, "ohp_12m"),
+    coef_se(iv_ste, "ohp_12m")
+  ),
+  `p-values` = c(
+  paste0("[", pval_fun(itt_chol, "lottery"), "]<br>(", pval_fun(iv_chol, "ohp_12m"), ")"),
+  paste0("[", pval_fun(itt_diab, "lottery"), "]<br>(", pval_fun(iv_diab, "ohp_12m"), ")"),
+  paste0("[", pval_fun(itt_mam, "lottery"), "]<br>(", pval_fun(iv_mam, "ohp_12m"), ")"),
+  paste0("[", pval_fun(itt_pap, "lottery"), "]<br>(", pval_fun(iv_pap, "ohp_12m"), ")"),
+  paste0("[", pval_fun(itt_ste, "lottery"), "]<br>(", pval_fun(iv_ste, "ohp_12m"), ")")
+)
+)
+
+kable(
+  results_table,
+  format = "html",
+  escape = FALSE,
+  align = c("l", "c", "c", "c", "c"),
+  col.names = c(" ", "Control mean (1)", "ITT (2)", "LATE (3)", "p-values (4)")
+) %>%
+  kable_styling(full_width = FALSE)
+```
+The following table is the improved output. 
+<br>
+
+**c. Comparison with the paper**
+<br>
+The specification proposed by AI matches the paper pretty well. The same 4 preventive care outcomes are being used in our replicated table. However, it is not exactly the same. While our data contains the correct data for "Blood cholesterol checker (ever)" and "Blood tested for high blood sugar/diabetes (ever)", our data does not actually have 12 month survey samples for "Mammogramm within last 12 months" and "Pap test within last 12 months". This means that these parts of the table cannot exactly be replicated with the provided data. Furthermore, there exists some other differences, for example, the paper's IV specification is defined as "ever on Medicaid", meanwhile we use the IV specification of "Currently have OHP insurance". This changes the interpretation because in the paper LATE shows the effect of Medicaid exposure at any point during the study ("ever on Medicaid"), whereas in our table, with our data, it shows the effect of being on Medicaid specifically at month 12. Moreover, below table 6 in the paper it notes: "All regressions include household size fixed effects, survey wave fixed effects, and the interaction between the two. All standard errors are clustered on the household and all regressions are weighted using survey.". Our AI specification does not include these. This is also the case for the p-values, the paper specifies: "Column (4) reports the per comparison p-value and the family-wise p-value across the four different preventive care measures used to create the standardized treat". We only use p-values for the ITT and IV coefficients, so it is not identical. Lastly, we can see that the overall values are not a exact, but close match between the our table and table 6 in the paper. This is to be expected due to all the reasons mentioned above. 
+
+<br>
+
+**d. Reflection**
+<br>
+We think that this exercise has once again shown that AI can be very useful for coding, but is by no means a substitute for human judgement. It generated the necessary code and the setup for the table as well as the ITT and IV regressions. If we had to do this by ourselves, it would have taken us a very long time. However, human judgement is still very important, AI does not get everything right, and we have to go through rounds of improvement of the prompt and the subsequent AI output. Moreover, AI can also be misleading, and this exercise is a very good example of that. For this exercise, we provided the AI with all the necessary documents, including the codebook, which specifies each variable. But, in the final table, AI still displayed the variable name of "Mammogramm within last 12 months" and "Pap test within last 12 months", even though the data that it used was not that, but rather "Mammogramm ever" and "Pap test ever". If we hadn't double-checked this would have been a mistake. Furthermore, human judgement is required for checking the differences between the replicated table and the actual table in the paper. So 4c) largely required human judgement in order to point out the differences in specification. As always, AI is very helpful, but not enough on its own. 
+
+
+
+
+
+
+
